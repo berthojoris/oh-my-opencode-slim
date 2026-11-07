@@ -97,10 +97,13 @@ The TUI sidebar uses the compact layout by default. Set `compactSidebar` to
 
 Click the `OMO-Slim` heading to collapse or expand its sidebar section. It
 starts expanded; the choice lasts for the current TUI window only. An idle
-agent has a `•` before its name. While an agent session reports `busy` or
-`retry`, an animated Braille indicator replaces the bullet in the same spot.
-The bullet returns after every active session for that agent becomes idle or
-is deleted.
+agent has a `•` before its name. While an agent is running — a child session
+reporting `busy` or `retry`, or the conversation's own root session (the
+orchestrator row) — an animated Braille indicator replaces the bullet in the
+same spot. The bullet returns after every active session for that agent
+becomes idle or is deleted. In compact rows the model label on the right is
+rendered in bold body text, so it reads separately from the colored agent
+name.
 
 In an expanded agent list, `⚰` marks a stopped session (no terminal result); only `task_revive` can continue it.
 

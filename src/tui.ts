@@ -5,7 +5,12 @@ import type {
   TuiPlugin,
   TuiPluginApi,
 } from '@opencode-ai/plugin/tui';
-import { type ColorInput, parseColor, RGBA } from '@opentui/core';
+import {
+  type ColorInput,
+  parseColor,
+  RGBA,
+  TextAttributes,
+} from '@opentui/core';
 import type { JSX } from '@opentui/solid';
 import { createElement, insert, setProp } from '@opentui/solid';
 import { createSignal } from 'solid-js';
@@ -1294,7 +1299,12 @@ function compactAgentRow(options: AgentRowOptions): JSX.Element {
       box({ flexDirection: 'row', flexGrow: 1, shouldFill: false }),
       text(
         {
-          fg: agentColor(options.agentName, theme),
+          // The model label is secondary metadata, not an identity tint:
+          // body-text color plus bold separates it from the colored agent
+          // name in one glance. Terminal cells have no font family or size,
+          // so weight and color are the only levers available.
+          fg: theme.text,
+          attributes: TextAttributes.BOLD,
           wrapMode: 'none',
           truncate: true,
           flexShrink: 1,
@@ -1537,6 +1547,9 @@ export function renderSidebar(
   interaction?: SidebarInteraction,
   presetRow?: SidebarPresetRow,
   modelNames?: ReadonlyMap<string, string>,
+  /** Live host status for the conversation's root session (the one row the
+   *  activity snapshot cannot see: a root agent has no child session). */
+  rootActivity?: { agentName?: string; busy?: boolean },
 ): JSX.Element {
   const configStatusRow = buildConfigStatusRow(configInvalid, theme);
   const presetHoverBackground = resolveHoverBackground({
@@ -1552,7 +1565,14 @@ export function renderSidebar(
         interaction?.hasSelectedText,
       )
     : null;
-  const activeAgents = getActiveSidebarAgentNames(snapshot, visibleRootID);
+  const activeAgents = new Set(
+    getActiveSidebarAgentNames(snapshot, visibleRootID),
+  );
+  // The root agent (orchestrator) never appears in `activeSessions`: only
+  // child sessions do. Its live status is the only source for its spinner.
+  if (rootActivity?.busy === true && rootActivity.agentName !== undefined) {
+    activeAgents.add(rootActivity.agentName);
+  }
   const targetsByAgent = new Map(
     getSidebarAgentTargets(snapshot, visibleRootID).map((group) => [
       group.agentName,
@@ -2086,6 +2106,8 @@ interface V2TuiContext extends V2PresetManagerContext {
       get?: (
         sessionID: string,
       ) => { parentID?: unknown; agent?: unknown } | undefined;
+      /** Live run state of a session (`idle` | `busy` | `retry`). */
+      status?: (sessionID: string) => { type?: string } | undefined;
     };
   };
   renderer: { requestRender: () => void; getSelection?: () => unknown };
@@ -2170,6 +2192,12 @@ interface SidebarRuntimeAdapter {
   getSelectedRootModel?: () =>
     | { model: string; variant?: string | undefined }
     | undefined;
+  /**
+   * v2 hosts only: live busy state of the visible root session. Child agents
+   * are covered by the activity snapshot; the root agent (usually the
+   * orchestrator) is only known to the host, so its spinner needs this.
+   */
+  getRootActivity?: () => { agentName?: string; busy: boolean } | undefined;
 }
 
 /** Shape `readTuiSnapshot` returns for an empty/missing state file. */
@@ -2471,15 +2499,27 @@ function createSidebarRuntime(
     sidebarEnabled ? scheduleRefresh : pollConfigOnly,
     sidebarEnabled ? (envRefreshMs ?? 1000) : (envRefreshMs ?? 5000),
   );
+  // A root run has no child session, so the activity snapshot alone cannot
+  // tell whether anything is still spinning; both sides feed this probe.
+  const hasLiveActivity = (): boolean => {
+    if (
+      getActiveSidebarAgentNames(snapshot(), adapter.getVisibleSession()).size >
+      0
+    ) {
+      return true;
+    }
+    const activity = adapter.getRootActivity?.();
+    return activity?.busy === true && activity.agentName !== undefined;
+  };
+  let wasLiveActive = false;
   const animationTimer = sidebarEnabled
     ? setInterval(() => {
-        if (
-          !disposed &&
-          getActiveSidebarAgentNames(snapshot(), adapter.getVisibleSession())
-            .size > 0
-        ) {
-          setAnimationNow(Date.now());
-        }
+        if (disposed) return;
+        const live = hasLiveActivity();
+        // Re-render on the falling edge as well: without it the last
+        // spinning frame would stay on screen until the next snapshot poll.
+        if (live || live !== wasLiveActive) setAnimationNow(Date.now());
+        wasLiveActive = live;
       }, ACTIVITY_FRAME_MS)
     : undefined;
 
@@ -2522,6 +2562,7 @@ function createSidebarRuntime(
             interaction,
             adapter.getPresetRow?.(configDirectory, presetName, sessionLabel),
             modelNames(),
+            adapter.getRootActivity?.(),
           );
         }),
       )
@@ -2678,6 +2719,17 @@ async function setup(
             : undefined,
           selected: ctx.ui.model?.current?.(),
         });
+      },
+      getRootActivity: () => {
+        const sessionID = resolveRouteSessionId(ctx.ui.router.current());
+        if (!sessionID) return undefined;
+        const info = ctx.data?.session?.get?.(sessionID);
+        if (!info || info.parentID) return undefined;
+        const status = ctx.data?.session?.status?.(sessionID);
+        return {
+          agentName: typeof info.agent === 'string' ? info.agent : undefined,
+          busy: status?.type === 'busy' || status?.type === 'retry',
+        };
       },
       client: ctx.client,
       renderer: ctx.renderer,

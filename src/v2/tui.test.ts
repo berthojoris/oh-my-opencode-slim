@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { RGBA } from '@opentui/core';
+import { RGBA, TextAttributes } from '@opentui/core';
 import { testRender } from '@opentui/solid';
 import { createSignal } from 'solid-js';
 import type { PluginConfig } from '../config';
@@ -1061,7 +1061,7 @@ describe('v2 tui preset plugin', () => {
       expect(cleanup).toBeUndefined();
     });
 
-    test('renders agent labels and models in categorical colors and the brand in the interactive hue', async () => {
+    test('renders agent labels in categorical colors, model labels in body text, and the brand in the interactive hue', async () => {
       const stub = makeSetupCtx();
       writeUserConfig(makeConfig() as unknown as Record<string, unknown>);
       recordTuiSessionParent('oracle-live', 'root', projectDir);
@@ -1131,8 +1131,13 @@ describe('v2 tui preset plugin', () => {
         expect(mutedText).toBeDefined();
         expect(namedAgent?.fg.r).toBeCloseTo(210 / 255);
         expect(secondAgent?.fg.r).toBeCloseTo(80 / 255);
-        expect(model?.fg).toEqual(namedAgent?.fg);
-        expect(secondModel?.fg).toEqual(secondAgent?.fg);
+        // Model labels are secondary metadata: body text plus bold, not the
+        // agent's categorical tint.
+        expect(model?.fg.r).toBeCloseTo(240 / 255);
+        expect(secondModel?.fg).toEqual(model?.fg);
+        expect((model?.attributes ?? 0) & TextAttributes.BOLD).toBe(
+          TextAttributes.BOLD,
+        );
         expect(brand?.bg.b).toBeCloseTo(210 / 255);
         expect(brand?.fg.r).toBeCloseTo(240 / 255);
         expect(activeIndicator?.fg.g).toBeCloseTo(171 / 255);

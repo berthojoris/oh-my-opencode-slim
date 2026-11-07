@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { RGBA } from '@opentui/core';
+import { RGBA, TextAttributes } from '@opentui/core';
 import { testRender } from '@opentui/solid';
 import sidebarFrameGolden from './sidebar-frame-golden.json';
 import type { ModelNamesCache } from './tui';
@@ -3758,6 +3758,91 @@ describe('sidebar model display names', () => {
     expect(explorerLine).toMatch(/explorer\s+Claude Haiku/);
     const fixerLine = lines.find((line) => line.includes('fixer')) ?? '';
     expect(fixerLine).toMatch(/fixer\s+gpt-9/);
+  });
+
+  test('compact model labels render bold in body text color', async () => {
+    const snapshot = createSnapshot({ agentModels: { explorer: 'default' } });
+    const setup = await testRender(
+      () =>
+        renderSidebar(
+          snapshot,
+          'test',
+          rowTheme,
+          false,
+          true,
+          () => 0,
+        ) as never,
+      { width: 60, height: 24 },
+    );
+    try {
+      await setup.renderOnce();
+      const span = setup
+        .captureSpans()
+        .lines.flatMap((line) => line.spans)
+        .find((entry) => entry.text.includes('default'));
+      expect(span).toBeDefined();
+      expect(span?.fg.toInts()).toEqual([255, 255, 255, 255]);
+      expect((span?.attributes ?? 0) & TextAttributes.BOLD).toBe(
+        TextAttributes.BOLD,
+      );
+    } finally {
+      setup.renderer.destroy();
+    }
+  });
+
+  test('root agent spins while its session is busy', async () => {
+    const snapshot = createSnapshot({
+      agentModels: { orchestrator: 'openai/gpt-5', explorer: 'openai/gpt-5' },
+    });
+    const lines = await renderSidebarFrame(() =>
+      renderSidebar(
+        snapshot,
+        'test',
+        rowTheme,
+        false,
+        true,
+        () => 0,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { agentName: 'orchestrator', busy: true },
+      ),
+    );
+
+    const orchestratorLine =
+      lines.find((line) => line.includes('orchestrator')) ?? '';
+    expect(orchestratorLine).toMatch(ACTIVITY_FRAME_PATTERN);
+    // Non-root rows keep reading activity from the snapshot alone.
+    const explorerLine = lines.find((line) => line.includes('explorer')) ?? '';
+    expect(explorerLine).toMatch(new RegExp(STATUS_DOT_GLYPH));
+    expect(explorerLine).not.toMatch(ACTIVITY_FRAME_PATTERN);
+  });
+
+  test('root agent falls back to the idle dot when not busy', async () => {
+    const snapshot = createSnapshot({
+      agentModels: { orchestrator: 'openai/gpt-5' },
+    });
+    const lines = await renderSidebarFrame(() =>
+      renderSidebar(
+        snapshot,
+        'test',
+        rowTheme,
+        false,
+        true,
+        () => 0,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { agentName: 'orchestrator', busy: false },
+      ),
+    );
+
+    const orchestratorLine =
+      lines.find((line) => line.includes('orchestrator')) ?? '';
+    expect(orchestratorLine).toMatch(new RegExp(STATUS_DOT_GLYPH));
+    expect(orchestratorLine).not.toMatch(ACTIVITY_FRAME_PATTERN);
   });
 
   test('expanded rows add a name detail row only when it differs', async () => {
